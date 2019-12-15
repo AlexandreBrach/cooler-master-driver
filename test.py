@@ -1,20 +1,12 @@
-#!/usr/bin/env python3
-
-# -*- coding: utf-8 -*-
-""" Module to manage Cooler Master S FR keyboard
-    libusb should be installed on the system
-    pyusb too, see more info at https://github.com/pyusb/pyusb/blob/master/docs/tutorial.rst
-"""
+#!/usr/bin/python3
 
 import sys
 import time
+import array
 import usb.core
 import usb.util
 
-CMMK_USB_VENDOR = 0x2516
 #CMMK_USB_PRODUCT = 0x003b
-CMMK_USB_INTERFACE = 1
-
 
 def getKeyboardInfo(dev):
     """ print Cooler Master device informations
@@ -76,27 +68,104 @@ def getKeyboardInfo(dev):
     print(product)
 
 
+class CoolerMaster:
+
+    CMMK_USB_VENDOR = 0x2516
+    CMMK_USB_INTERFACE = 1
+
+    ACTIVE_PROFILE = 0x00
+
+    def __init__(self):
+        self.usb_device = usb.core.find(idVendor=self.CMMK_USB_VENDOR)
+        if self.usb_device is None:
+            raise ValueError('CoolerMaster is not connected')
+
+        self.iface = usb.core.Interface(self.usb_device, self.CMMK_USB_INTERFACE)
+        self.kernel_detach()
+        # self.usb_device.set_configuration()
+
+    def kernel_detach(self):
+        '''
+        don't know if it may be usefull ...
+        '''
+        if self.usb_device.is_kernel_driver_active(1):
+            try:
+                self.usb_device.detach_kernel_driver(1)
+            except usb.core.USBError as e:
+                sys.exit("Could not detach kernel driver: ")
+
+
+
+    def claim_interface(self):
+        usb.util.claim_interface(self.usb_device, self.iface)
+        # self.configuration = usb.core.Configuration(self.usb_device)
+        self.configuration = self.usb_device.get_active_configuration()
+        self.endpoints = self.iface.endpoints()
+        if self.endpoints[0].bEndpointAddress != 4:
+            self.writer = self.endpoints[1]
+            self.reader = self.endpoints[0]
+        else:
+            self.writer = self.endpoints[0]
+            self.reader = self.endpoints[1]
+
+    def print_interface(self):
+        print(self.iface)
+
+    def read(self, data):
+        r = self.writer.read(data)
+        print(data)
+        return r
+
+    def get( self, prop ):
+        buff = array.array('B',[0x52,prop,0x00,0x00,0x00 ])
+        return self.read(buff)
+
+    def write(self, data):
+        self.writer.write(data)
+
+    def start(self):
+        self.write([0x01,0x02])
+
+    def get_firmware_version(self):
+        buff = array.array('B',[0x05,0x00,0x00,0x00])
+        return self.read(buff)
+
+
+    def set_firmware_control(self):
+        self.write([0x41,0x00])
+
+    def set_effect_control(self):
+        self.write([0x41,0x01])
+
+    def set_manual_control(self):
+        self.write([0x41,0x02])
+
+    def set_profile_control(self):
+        self.write([0x41,0x03])
+
+
+
+    def set( self, prop, value ):
+        self.read([0x51] + prop + value)
+
+    def set_active_profile(self,n):
+        self.write([0x51,0x00,0x00,n])
+
+
+    def dispose(self):
+        usb.util.dispose_resources(self.usb_device)
+
+
 if __name__ == "__main__":
-    coolermaster = usb.core.find(idVendor=CMMK_USB_VENDOR)
-    if coolermaster is None:
-        raise ValueError('Our device is not connected')
 
-    iface = usb.core.Interface(coolermaster, CMMK_USB_INTERFACE)
-    print(iface)
-    usb.util.claim_interface(coolermaster, iface)
+    c = CoolerMaster()
+    c.claim_interface()
 
-    configuration = usb.core.Configuration(coolermaster)
-    coolermaster.set_configuration()
-    endpoints = iface.endpoints()
-    if endpoints[0].bEndpointAddress == 4:
-        cooler_writer = endpoints[1]
-        cooler_reader = endpoints[0]
-    else:
-        cooler_writer = endpoints[0]
-        cooler_reader = endpoints[1]
+    c.start()
+    # c.set_firmware_control()
+    c.set_active_profile(0x02)
+    print( c.get_firmware_version() )
+    # value = c.get(c.ACTIVE_PROFILE)
+    # print( value )
+    c.dispose()
 
-    PROFILE = 1
-    DATA = [0x51, 0x00, 0x00, 0x00, PROFILE]
-
-    cooler_writer.write(DATA)
-    usb.util.dispose_resources(coolermaster)
